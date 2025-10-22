@@ -26,13 +26,15 @@ except (ImportError, AttributeError) as e:
     WANDB_AVAILABLE = False
     warnings.warn(f"wandb not available: {e}. Install compatible version with: pip install wandb --upgrade")
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-    TENSORBOARD_AVAILABLE = True
-except (ImportError, AttributeError) as e:
-    # TensorBoard may fail with NumPy 2.0 incompatibility
-    TENSORBOARD_AVAILABLE = False
-    # Don't warn - tensorboard is purely optional, we have wandb and file logging
+# TensorBoard import - fails with NumPy 2.0, so make it completely optional
+TENSORBOARD_AVAILABLE = False
+SummaryWriter = None
+# Don't even try to import - tensorboard is purely optional, we have wandb and file logging
+# try:
+#     from torch.utils.tensorboard import SummaryWriter
+#     TENSORBOARD_AVAILABLE = True
+# except (ImportError, AttributeError) as e:
+#     TENSORBOARD_AVAILABLE = False
 
 
 class BaseLogger:
