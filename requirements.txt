@@ -1,0 +1,36 @@
+# Heavy-Tailed Gradient Scaling Laws - Requirements
+# Phase 1: Establish Heavy-Tail Phenomenon
+
+# Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Numerical Computing
+numpy>=1.24.0
+scipy>=1.10.0  # Includes scipy.stats.levy_stable for alpha-stable ML estimation
+
+# Experiment Tracking & Logging
+wandb>=0.15.0
+tensorboard>=2.13.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Data Handling
+pandas>=2.0.0
+
+# Configuration
+pyyaml>=6.0
+
+# Utilities
+tqdm>=4.65.0
+
+# Development (optional, for testing)
+pytest>=7.3.0
+black>=23.0.0
+flake8>=6.0.0
+
+# Optional: For better alpha-stable fitting
+# Install from: https://github.com/scipy/scipy (development version)
+# Or wait for scipy 1.12+ which may include better stable distribution support

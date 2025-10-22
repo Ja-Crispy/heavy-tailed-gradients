@@ -1,0 +1,158 @@
+# Logging Configuration
+# Flexible backend supporting wandb, files, and plots
+
+backends:
+  wandb:
+    enabled: true
+    sync_local: true  # Automatically sync to local directory
+    local_dir: "outputs/wandb_local"
+
+    # Default project settings (can be overridden by experiment configs)
+    default_project: "heavy-tail-scaling"
+    default_entity: null
+
+    # Logging settings
+    log_frequency: 10  # Log every N steps
+    log_code: true  # Upload code to wandb
+    log_config: true  # Upload config files
+
+    # Save models to wandb
+    save_checkpoints: true
+
+  files:
+    enabled: true
+    formats: ["json", "csv"]  # Support multiple formats
+    output_dir: "outputs/logs"
+
+    # Compression for large files
+    compress: true
+    compression_format: "gzip"
+
+    # Backup settings
+    create_backups: true
+    backup_interval: 1000  # Backup every 1000 steps
+
+  tensorboard:
+    enabled: false  # Optional, for future
+    log_dir: "outputs/tensorboard"
+
+  plots:
+    enabled: true
+    output_dir: "outputs/plots"
+    formats: ["png", "pdf"]
+    dpi: 300  # High quality for publications
+
+    # Plot style
+    style: "seaborn-v0_8-paper"
+    figure_size: [10, 6]
+    font_size: 12
+
+# What to log
+metrics:
+  # Alpha measurements (per estimator, per parameter)
+  alpha:
+    - "hill"
+    - "pickands"
+    - "ml"
+
+  # Training metrics
+  training:
+    - "loss"
+    - "grad_norm"
+    - "learning_rate"
+    - "weight_norm"
+
+  # Spectral analysis
+  spectral:
+    - "singular_values"
+    - "top_singular_value"
+    - "spectral_norm"
+    - "power_law_exponent"
+
+  # Gradient statistics
+  gradients:
+    - "l1_norm"
+    - "l2_norm"
+    - "linf_norm"
+    - "variance"
+    - "skewness"
+    - "kurtosis"
+
+  # Model-specific (transformer)
+  model:
+    - "sublayer_gain"
+    - "attention_entropy"
+    - "layer_norms"
+
+# Plotting configuration
+plots:
+  # Alpha evolution over time
+  alpha_evolution:
+    enabled: true
+    plot_type: "line"
+    x_axis: "step"
+    y_axis: "alpha"
+    groupby: "estimator"
+    title: "Tail Index (α) Evolution During Training"
+
+  # Alpha vs width (Exp 1.1)
+  alpha_vs_width:
+    enabled: true
+    plot_type: "scatter"
+    x_axis: "width"
+    y_axis: "alpha"
+    groupby: "estimator"
+    title: "Tail Index vs Model Width"
+
+  # Layer-wise alpha (Exp 1.2)
+  alpha_layerwise:
+    enabled: true
+    plot_type: "heatmap"
+    x_axis: "layer"
+    y_axis: "parameter_group"
+    value: "alpha"
+    title: "Layer-wise Tail Index Distribution"
+
+  # QQ-plots for distribution validation
+  qq_plots:
+    enabled: true
+    theoretical_dist: "alpha_stable"
+    title: "Q-Q Plot: Empirical vs α-Stable"
+
+  # Gradient distribution (log-log plot)
+  gradient_tail:
+    enabled: true
+    plot_type: "loglog"
+    x_axis: "rank"
+    y_axis: "magnitude"
+    title: "Gradient Tail Behavior (Log-Log Plot)"
+
+  # Estimator comparison
+  estimator_comparison:
+    enabled: true
+    plot_type: "box"
+    x_axis: "estimator"
+    y_axis: "alpha"
+    title: "Tail Index Estimates by Method"
+
+# Advanced settings
+advanced:
+  # Memory management
+  max_log_buffer_size: 10000  # Flush after N entries
+
+  # Parallel logging
+  async_logging: true
+  num_workers: 2
+
+  # Error handling
+  on_error: "warn"  # "warn", "raise", or "ignore"
+  retry_failed: true
+  max_retries: 3
+
+  # Git integration
+  track_git_commit: true
+  check_dirty_repo: true
+
+  # Reproducibility
+  save_random_state: true
+  log_system_info: true  # CPU, GPU, memory, etc.

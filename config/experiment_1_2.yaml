@@ -1,0 +1,123 @@
+# Experiment 1.2: Minimal Real Gradient Flow
+# Purpose: Verify phenomenon with real gradient flow
+
+experiment:
+  name: "exp_1_2_real_gradients"
+  seed: 42
+  output_dir: "outputs/exp_1_2"
+  description: "4-layer transformer with real gradient flow to verify heavy-tail phenomenon"
+
+model:
+  type: "nano_transformer"
+  d_models: [128, 256]  # Test two model sizes
+  n_layers: 4
+  n_heads: 2
+  d_ff_multiplier: 4  # d_ff = 4 * d_model (standard transformer)
+  dropout: 0.0  # No dropout for cleaner measurements
+  use_positional_encoding: false  # Simplified for Phase 1
+  norm_type: "rmsnorm"  # LLaMA-style normalization
+
+data:
+  type: "synthetic_sequences"
+  vocab_size: 1000
+  seq_length: 128
+
+  # Data generation
+  num_sequences: 100000  # Total synthetic sequences
+  split: [0.9, 0.1]  # Train/val split
+
+  # Task
+  task: "next_token_prediction"
+
+training:
+  steps: 10000
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 0.0003
+  weight_decay: 0.01  # Use weight decay for real training
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  # No gradient clipping initially (measure natural α)
+  gradient_clip: null
+
+  # Warmup for stable training
+  warmup_steps: 500
+  lr_schedule: "cosine"  # cosine decay after warmup
+
+measurement:
+  # Measure α at specific checkpoints
+  alpha_intervals: [100, 1000, 10000]  # Early, mid, steady-state
+
+  # Also measure every N steps for continuous tracking
+  continuous_interval: 100
+
+  # Use all three estimators
+  estimators: ['hill', 'pickands', 'ml']
+
+  # Multiple k-ratios
+  k_ratios: [0.05, 0.1, 0.2]
+
+  # Layer-wise analysis
+  layer_wise: true
+
+  # Parameter grouping for analysis
+  param_groups:
+    - name: "attention"
+      params: ["q_proj", "k_proj", "v_proj", "o_proj"]
+    - name: "ffn"
+      params: ["gate", "up", "down"]
+    - name: "vector"
+      params: ["embeddings", "rmsnorm"]
+
+  # Track α evolution by depth
+  track_by_depth: true
+
+  # AlphaTracker window
+  window_size: 100
+
+logging:
+  use_wandb: true
+  use_files: true
+  save_plots: true
+
+  wandb_project: "heavy-tail-scaling"
+  wandb_entity: null
+  wandb_tags: ["phase1", "exp1.2", "real_gradients", "transformer"]
+
+  log_format: "json"
+  log_interval: 10
+
+  plot_interval: 1000
+  plot_format: ["png", "pdf"]
+
+  # Additional metrics for transformers
+  log_attention_stats: true
+  log_layer_norms: true
+
+analysis:
+  generate_qq_plots: true
+  track_singular_values: true
+  n_singular_values: 10
+
+  track_grad_norms: true
+  track_weight_norms: true
+
+  # Transformer-specific analysis
+  attention_vs_ffn_comparison: true
+  depth_effect_analysis: true
+  early_vs_steady_state: true
+
+  # Sublayer gain analysis (per paper)
+  compute_sublayer_gain: true
+
+checkpointing:
+  enabled: true
+  interval: 2000
+  save_best: true
+  metric: "val_loss"  # Save best validation loss model
+
+validation:
+  enabled: true
+  interval: 500  # Validate every 500 steps
+  num_batches: 10  # Use 10 batches for validation

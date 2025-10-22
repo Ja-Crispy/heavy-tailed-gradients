@@ -1,0 +1,95 @@
+# Experiment 1.1: Synthetic Gradient Model
+# Purpose: Test if heavy tails are architectural, not data-driven
+
+experiment:
+  name: "exp_1_1_synthetic_gradients"
+  seed: 42
+  output_dir: "outputs/exp_1_1"
+  description: "2-layer FFN with synthetic gradient injection to isolate architectural effects"
+
+model:
+  type: "minimal_ffn"
+  widths: [64, 128, 256, 512]  # Test across multiple widths
+  activation: "relu"
+  use_bias: false  # No biases to eliminate confounds
+
+training:
+  steps: 10000
+  batch_size: 256
+  optimizer: "adamw"
+  lr: 0.001
+  weight_decay: 0.0  # No weight decay for Exp 1.1
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+  # Test effect of gradient clipping on α
+  gradient_clips: [null, 1.0, 0.1]  # null = no clipping
+
+measurement:
+  # Measure α every 100 training steps
+  alpha_interval: 100
+
+  # Use all three estimators
+  estimators: ['hill', 'pickands', 'ml']
+
+  # Multiple k-ratios for robustness (fraction of top order statistics to use)
+  k_ratios: [0.05, 0.1, 0.2]
+
+  # AlphaTracker sliding window size
+  window_size: 100
+
+  # Measure separately for each parameter
+  per_parameter: true
+
+  # Also compute aggregated statistics
+  compute_aggregates: true
+
+synthetic:
+  # Input distribution: x ~ N(0, I_d)
+  input_dist: "normal"
+  input_mean: 0.0
+  input_std: 1.0
+
+  # Upstream gradient distribution: ∇_y L ~ N(0, I_d)
+  grad_dist: "normal"
+  grad_mean: 0.0
+  grad_std: 1.0
+
+  # Exploration options (for future experiments)
+  # grad_dist: "cauchy"  # Heavy-tailed test
+  # grad_dist: "laplace"  # Sub-Gaussian test
+  # grad_dist: "uniform"  # Bounded support test
+
+logging:
+  use_wandb: true
+  use_files: true
+  save_plots: true
+
+  wandb_project: "heavy-tail-scaling"
+  wandb_entity: null  # Set to your wandb username/team
+  wandb_tags: ["phase1", "exp1.1", "synthetic"]
+
+  # Local file logging
+  log_format: "json"  # json or csv
+  log_interval: 10  # Log every 10 steps
+
+  # Plotting
+  plot_interval: 1000  # Generate plots every 1000 steps
+  plot_format: ["png", "pdf"]  # Save in both formats
+
+analysis:
+  # Generate QQ-plots for distribution validation
+  generate_qq_plots: true
+
+  # Spectral analysis
+  track_singular_values: true
+  n_singular_values: 10  # Track top 10
+
+  # Gradient statistics
+  track_grad_norms: true
+  track_weight_norms: true
+
+checkpointing:
+  enabled: true
+  interval: 2000  # Save checkpoint every 2000 steps
+  save_best: true  # Save model with lowest α variance
