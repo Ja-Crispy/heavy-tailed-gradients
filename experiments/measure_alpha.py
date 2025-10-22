@@ -211,13 +211,9 @@ def run_single_experiment_1_1(width: int, clip_value: Optional[float],
         if clip_value is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
 
-        # Optimizer step
-        optimizer.step()
-        optimizer.zero_grad()
-
-        # Measure alpha at specified intervals
+        # Measure alpha BEFORE clearing gradients!
         if step % meas_config.get('alpha_interval', 100) == 0 or step == train_config['steps'] - 1:
-            # Update alpha tracker
+            # Update alpha tracker (needs gradients to be present!)
             alpha_tracker.update(model, prefix=f'd{width}{clip_str}')
 
             # Get summary statistics
@@ -256,6 +252,10 @@ def run_single_experiment_1_1(width: int, clip_value: Optional[float],
             if summary:
                 first_alpha = list(summary.values())[0]['mean']
                 pbar.set_postfix({'α': f"{first_alpha:.3f}"})
+
+        # Optimizer step (after measuring alpha!)
+        optimizer.step()
+        optimizer.zero_grad()
 
         # Periodic plot saving
         if step > 0 and step % 1000 == 0:
@@ -421,11 +421,7 @@ def run_single_experiment_1_2(d_model: int, config: Dict[str, Any],
         if clip_value is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
 
-        # Optimizer step
-        optimizer.step()
-        optimizer.zero_grad()
-
-        # Measure at specified intervals
+        # Measure at specified intervals (BEFORE clearing gradients!)
         alpha_intervals = meas_config.get('alpha_intervals', [100, 1000, 10000])
         continuous_interval = meas_config.get('continuous_interval', 100)
 
@@ -436,7 +432,7 @@ def run_single_experiment_1_2(d_model: int, config: Dict[str, Any],
         )
 
         if should_measure:
-            # Update alpha tracker
+            # Update alpha tracker (needs gradients!)
             alpha_tracker.update(model, prefix=f'd{d_model}')
 
             # Get overall summary
@@ -496,6 +492,10 @@ def run_single_experiment_1_2(d_model: int, config: Dict[str, Any],
                 pbar.set_postfix({'loss': f"{loss.item():.4f}", 'α': f"{first_alpha:.3f}"})
             else:
                 pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+
+        # Optimizer step (after measuring alpha!)
+        optimizer.step()
+        optimizer.zero_grad()
 
         # Periodic plot saving
         if step > 0 and step % 1000 == 0:
