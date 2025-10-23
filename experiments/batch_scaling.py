@@ -338,13 +338,13 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
             experiment_num += 1
             print(f"\n[{experiment_num}/{total_experiments}] Training: B={batch_size}, LR={lr:.6f}")
 
-            # Log config to wandb (use experiment_num as step for config)
+            # Log config to wandb (use global_step for monotonicity)
             if logger is not None:
                 logger.log({
                     'config/batch_size': batch_size,
                     'config/lr': lr,
                     'config/experiment_num': experiment_num
-                }, step=experiment_num)
+                }, step=global_step)
 
             # Train
             results, global_step = train_single_config(
@@ -368,7 +368,7 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
             # Store full results
             all_results.append(results)
 
-            # Log summary to wandb (use experiment_num as step)
+            # Log summary to wandb (use global_step - already updated after training)
             if logger is not None:
                 logger.log({
                     f'summary/B{batch_size}_LR{lr:.6f}_final_val_loss': results['final_val_loss'],
@@ -379,7 +379,7 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
                     'summary/final_train_loss': results['final_train_loss'],
                     'summary/batch_size': batch_size,
                     'summary/lr': lr
-                }, step=experiment_num)
+                }, step=global_step)
 
             # Print summary
             print(f"  Final val loss: {results['final_val_loss']:.4f}")
