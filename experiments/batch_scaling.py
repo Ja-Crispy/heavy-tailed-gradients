@@ -15,10 +15,11 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, Set
 import yaml
 import csv
 import time
+import json
 from tqdm import tqdm
 
 import torch
@@ -34,8 +35,12 @@ from core.metrics import MetricsTracker, flatten_metrics
 from models.nano_transformer import NanoTransformer
 from experiments.synthetic_data import (
     create_token_dataloader,
-    infinite_dataloader,
+    infinite_dataloader as synthetic_infinite_dataloader,
     set_seed
+)
+from experiments.wikitext_data import (
+    create_wikitext_dataloader,
+    infinite_dataloader as wikitext_infinite_dataloader
 )
 
 
@@ -44,6 +49,92 @@ def load_config(config_path: str) -> Dict[str, Any]:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
+
+
+# ============================================================================
+# Checkpointing Functions
+# ============================================================================
+
+def load_checkpoint(checkpoint_file: Path) -> Set[Tuple[int, float]]:
+    """
+    Load checkpoint of completed configurations.
+
+    Args:
+        checkpoint_file: Path to checkpoint JSON file
+
+    Returns:
+        Set of (batch_size, lr) tuples that have been completed
+    """
+    if not checkpoint_file.exists():
+        return set()
+
+    try:
+        with open(checkpoint_file, 'r') as f:
+            data = json.load(f)
+            # Convert list of lists to set of tuples
+            return {(item[0], item[1]) for item in data.get('completed', [])}
+    except (json.JSONDecodeError, KeyError, ValueError):
+        print(f"⚠ Warning: Checkpoint file corrupted, starting fresh")
+        return set()
+
+
+def save_checkpoint(checkpoint_file: Path, batch_size: int, lr: float):
+    """
+    Save completed configuration to checkpoint.
+
+    Args:
+        checkpoint_file: Path to checkpoint JSON file
+        batch_size: Batch size that completed
+        lr: Learning rate that completed
+    """
+    # Load existing checkpoint
+    completed = load_checkpoint(checkpoint_file)
+
+    # Add new completion
+    completed.add((batch_size, lr))
+
+    # Convert to list of lists for JSON serialization
+    data = {
+        'completed': list(list(item) for item in completed),
+        'last_updated': time.time()
+    }
+
+    # Write atomically (write to temp, then rename)
+    temp_file = checkpoint_file.with_suffix('.tmp')
+    with open(temp_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    # Atomic rename
+    temp_file.replace(checkpoint_file)
+
+
+def get_checkpoint_status(
+    checkpoint_file: Path,
+    all_configs: List[Tuple[int, float]]
+) -> Dict[str, Any]:
+    """
+    Get human-readable checkpoint status.
+
+    Args:
+        checkpoint_file: Path to checkpoint file
+        all_configs: List of all (batch_size, lr) configurations
+
+    Returns:
+        Dictionary with status information
+    """
+    completed = load_checkpoint(checkpoint_file)
+    total = len(all_configs)
+    num_completed = len(completed)
+    num_remaining = total - num_completed
+    percent = (num_completed / total * 100) if total > 0 else 0
+
+    return {
+        'total': total,
+        'num_completed': num_completed,
+        'num_remaining': num_remaining,
+        'percent_complete': percent,
+        'completed_configs': completed
+    }
 
 
 def create_optimizer(model: nn.Module, lr: float, config: Dict[str, Any]) -> torch.optim.Optimizer:
@@ -126,33 +217,60 @@ def train_single_config(
     optimizer = create_optimizer(model, lr, config)
 
     # Create dataloader with specified batch size
-    # Note: Using synthetic token sequences (same as Phase 1)
     dataset_config = config.get('dataset', {})
+    dataset_name = dataset_config.get('name', 'synthetic')  # 'synthetic' or 'wikitext2'
     vocab_size = model_config['vocab_size']
     seq_length = model_config['seq_length']
 
-    train_loader = create_token_dataloader(
-        vocab_size=vocab_size,
-        seq_length=seq_length,
-        num_sequences=dataset_config.get('num_sequences', 10000),
-        batch_size=batch_size,
-        pattern=dataset_config.get('pattern', 'random'),
-        seed=config['experiment'].get('seed', 42),
-        shuffle=True
-    )
-    train_iter = infinite_dataloader(train_loader)
+    if dataset_name == 'wikitext2':
+        # WikiText-2 with character-level tokenization (HuggingFace)
+        train_loader = create_wikitext_dataloader(
+            split='train',
+            seq_length=seq_length,
+            batch_size=batch_size,
+            vocab_size=vocab_size,
+            max_sequences=dataset_config.get('max_sequences', None),
+            shuffle=True,
+            num_workers=0  # Keep 0 for compatibility
+        )
+        train_iter = wikitext_infinite_dataloader(train_loader)
 
-    # Create validation dataloader (smaller)
-    val_loader = create_token_dataloader(
-        vocab_size=vocab_size,
-        seq_length=seq_length,
-        num_sequences=dataset_config.get('num_sequences', 10000) // 10,  # 10% for val
-        batch_size=batch_size,
-        pattern=dataset_config.get('pattern', 'random'),
-        seed=config['experiment'].get('seed', 42) + 1,  # Different seed for val
-        shuffle=False
-    )
-    val_iter = infinite_dataloader(val_loader)
+        # Validation dataloader
+        val_loader = create_wikitext_dataloader(
+            split='val',
+            seq_length=seq_length,
+            batch_size=batch_size,
+            vocab_size=vocab_size,
+            max_sequences=dataset_config.get('max_sequences', None),
+            shuffle=False,
+            num_workers=0
+        )
+        val_iter = wikitext_infinite_dataloader(val_loader)
+
+    else:
+        # Synthetic token sequences (Phase 2 default)
+        train_loader = create_token_dataloader(
+            vocab_size=vocab_size,
+            seq_length=seq_length,
+            num_sequences=dataset_config.get('num_sequences', 10000),
+            batch_size=batch_size,
+            pattern=dataset_config.get('pattern', 'random'),
+            seed=config['experiment'].get('seed', 42),
+            shuffle=True
+        )
+        train_iter = synthetic_infinite_dataloader(train_loader)
+
+        # Validation dataloader (smaller)
+        val_loader = create_token_dataloader(
+            vocab_size=vocab_size,
+            seq_length=seq_length,
+            num_sequences=dataset_config.get('num_sequences', 10000) // 10,  # 10% for val
+            batch_size=batch_size,
+            pattern=dataset_config.get('pattern', 'random'),
+            seed=config['experiment'].get('seed', 42) + 1,  # Different seed for val
+            shuffle=False
+        )
+        val_iter = synthetic_infinite_dataloader(val_loader)
 
     # Training loop
     steps = train_config['steps']
@@ -305,10 +423,35 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
     batch_sizes = sweep_config['batch_sizes']
     lr_candidates = sweep_config['lr_candidates']
 
+    # Prepare all configurations
+    all_configs = [(b, lr) for b in batch_sizes for lr in lr_candidates]
+    total_experiments = len(all_configs)
+
     print(f"\nBatch sizes: {batch_sizes}")
     print(f"LR candidates: {lr_candidates}")
-    print(f"Total experiments: {len(batch_sizes)} × {len(lr_candidates)} = {len(batch_sizes) * len(lr_candidates)}")
+    print(f"Total experiments: {len(batch_sizes)} × {len(lr_candidates)} = {total_experiments}")
     print(f"Output directory: {output_dir}")
+
+    # Load checkpoint and filter completed configs
+    checkpoint_file = output_dir / 'checkpoint.json'
+    completed_configs = load_checkpoint(checkpoint_file)
+
+    if completed_configs:
+        status = get_checkpoint_status(checkpoint_file, all_configs)
+        print(f"\n📊 Checkpoint Status:")
+        print(f"  Completed: {status['num_completed']}/{status['total']} ({status['percent_complete']:.1f}%)")
+        print(f"  Remaining: {status['num_remaining']}")
+        print(f"  Status: Resuming from checkpoint")
+
+        # Filter out completed configs
+        remaining_configs = [(b, lr) for b, lr in all_configs if (b, lr) not in completed_configs]
+    else:
+        print(f"\n📊 Checkpoint Status:")
+        print(f"  No previous checkpoint found")
+        print(f"  Status: Starting fresh")
+        remaining_configs = all_configs
+
+    print(f"  Configs to run: {len(remaining_configs)}")
 
     # Initialize results CSV
     results_file = logs_dir / config['logging'].get('results_file', 'results.csv')
@@ -317,26 +460,29 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
         'train_loss_std', 'converged', 'num_steps', 'timestamp'
     ]
 
-    csv_file = open(results_file, 'w', newline='')
+    # Open CSV in append mode if resuming, write mode if starting fresh
+    csv_mode = 'a' if completed_configs else 'w'
+    csv_file = open(results_file, csv_mode, newline='')
     csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-    csv_writer.writeheader()
+    if not completed_configs:
+        csv_writer.writeheader()
 
     # Run experiments
     all_results = []
-    total_experiments = len(batch_sizes) * len(lr_candidates)
-    experiment_num = 0
+    experiment_num = len(completed_configs)  # Start from number of completed
     global_step = 0  # Global step counter for wandb (monotonically increasing)
 
     start_time = time.time()
 
-    for batch_size in batch_sizes:
-        print(f"\n{'='*80}")
-        print(f"BATCH SIZE: {batch_size}")
-        print(f"{'='*80}")
+    for batch_size, lr in remaining_configs:
+        experiment_num += 1
+        print(f"\n[{experiment_num}/{total_experiments}] Training: B={batch_size}, LR={lr:.6f}")
 
-        for lr in lr_candidates:
-            experiment_num += 1
-            print(f"\n[{experiment_num}/{total_experiments}] Training: B={batch_size}, LR={lr:.6f}")
+        # Check batch size boundary (for printing header)
+        if experiment_num == 1 or (batch_size != remaining_configs[max(0, experiment_num-2)][0]):
+            print(f"\n{'='*80}")
+            print(f"BATCH SIZE: {batch_size}")
+            print(f"{'='*80}")
 
             # Log config to wandb (use global_step for monotonicity)
             if logger is not None:
@@ -364,6 +510,9 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
             csv_row = {k: results[k] for k in fieldnames}
             csv_writer.writerow(csv_row)
             csv_file.flush()  # Flush to disk immediately
+
+            # Save checkpoint (for resume capability)
+            save_checkpoint(checkpoint_file, batch_size, lr)
 
             # Store full results
             all_results.append(results)

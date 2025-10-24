@@ -403,19 +403,29 @@ MIT License - see LICENSE file for details
 
 ## 🔮 Future Work (Phases 2-4)
 
-### Phase 2: Batch Scaling Validation (Next)
+### Phase 2: Batch Scaling Validation ❌ (Inconclusive)
 **Goal**: Empirically validate LR ∝ B^(2/3) scaling
 
-- Test batch sizes: [8, 16, 32, 64, 128, 256, 512]
-- Find optimal LR for each batch size
-- Measure scaling exponent β, compare to:
-  - Laplace theory (α=3): β = 2/3 ≈ 0.67
-  - Gaussian theory: β = 1/2 = 0.50
-- Test transfer quality across batch sizes
+**Status**: Initial attempt with synthetic data failed to show scaling signal
+- Tested batch sizes: [8, 16, 32, 64, 128, 256, 512] with random tokens
+- **Result**: β = -0.36 (R² = 0.26) - no meaningful relationship
+- **Issue**: Synthetic task too easy, model converged uniformly across all hyperparameters
+- **Lesson**: Scaling laws require realistic tasks with clear hyperparameter sensitivity
 
-**Expected**: β_measured ≈ 0.67, confirming Laplace behavior
+📊 **Results**: See [PHASE_2_RESULTS.md](PHASE_2_RESULTS.md)
 
-📋 **Plan**: See [PHASE_2_PLAN.md](PHASE_2_PLAN.md) (to be created)
+### Phase 2.5: Batch Scaling with Real Data (In Progress)
+**Goal**: Retest batch scaling with WikiText-2 language modeling
+
+**Improvements**:
+- **Dataset**: WikiText-2 (real language, not random tokens)
+- **Model**: d_model=128 (~800K params, 4× larger)
+- **Batches**: [32, 64, 128, 256] (4 points, 8× range)
+- **LRs**: [0.0001, 0.0003, 0.001, 0.003, 0.01] (finer grid)
+- **Steps**: 10,000 (Phase 1 standard)
+- **Configs**: 20 total (~3-5 hours)
+
+**Expected**: Clear measurement of β ≈ 0.67 (Laplace) or 0.50 (Gaussian)
 
 ### Phase 3: Model Scale Dependence
 **Goal**: Test if α changes with model scale
@@ -437,7 +447,8 @@ MIT License - see LICENSE file for details
 
 **Status**:
 - Phase 1: ✅ COMPLETE - Laplace behavior confirmed (α ≈ 3)
-- Phase 2: 📋 Ready to begin - Batch scaling validation
+- Phase 2: ❌ Inconclusive - Synthetic task insufficient
+- Phase 2.5: 🚀 In Progress - Real data batch scaling
 - Phase 3-4: 📝 Planned
 
 For detailed implementation decisions and expert review notes, see `IMPLEMENTATION_DECISIONS.md`.

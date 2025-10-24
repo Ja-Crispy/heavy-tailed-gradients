@@ -1,0 +1,62 @@
+# Phase 2.5: Smoke Test (100 steps)
+# Quick validation of WikiText-2 integration before full experiment
+
+experiment:
+  name: "phase_2_5_smoke_test"
+  seed: 42
+  output_dir: "outputs/phase_2_5_smoke"
+  description: "Smoke test: Verify WikiText-2 integration with 100 steps"
+
+model:
+  type: "nano_transformer"
+  d_model: 128
+  n_layers: 4
+  n_heads: 4
+  vocab_size: 128  # ASCII character-level
+  seq_length: 256
+  dropout: 0.0
+
+training:
+  steps: 100  # SMOKE TEST: Only 100 steps
+  optimizer: "adamw"
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+  warmup_steps: 10  # 10% of training
+  grad_clip: 1.0
+
+  # Convergence criteria
+  eval_interval: 25
+  convergence_window: 20
+  convergence_threshold: 0.01
+
+batch_sweep:
+  # SMOKE TEST: Only 2 batches × 2 LRs = 4 configs (~5-10 min)
+  batch_sizes: [32, 64]
+  lr_candidates: [0.001, 0.003]
+
+dataset:
+  name: "wikitext2"
+  split: "train"
+  tokenizer: "char"
+  max_sequences: null  # Use all available
+
+logging:
+  use_wandb: false  # Disable for smoke test
+  wandb_project: "laplace-scaling-phase2-5"
+  wandb_entity: null
+  log_interval: 25
+  save_checkpoints: false
+
+  # Save results to CSV
+  save_results_csv: true
+  results_file: "results.csv"
+
+# Analysis settings
+analysis:
+  fit_method: "log_log_regression"
+  laplace_beta: 0.667
+  gaussian_beta: 0.500
+  laplace_range: [0.60, 0.74]
+  gaussian_range: [0.45, 0.55]
+  baseline_batch: 64
+  baseline_lr: 0.001
