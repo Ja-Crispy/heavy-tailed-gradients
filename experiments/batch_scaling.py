@@ -484,55 +484,55 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
             print(f"BATCH SIZE: {batch_size}")
             print(f"{'='*80}")
 
-            # Log config to wandb (use global_step for monotonicity)
-            if logger is not None:
-                logger.log({
-                    'config/batch_size': batch_size,
-                    'config/lr': lr,
-                    'config/experiment_num': experiment_num
-                }, step=global_step)
+        # Log config to wandb (use global_step for monotonicity)
+        if logger is not None:
+            logger.log({
+                'config/batch_size': batch_size,
+                'config/lr': lr,
+                'config/experiment_num': experiment_num
+            }, step=global_step)
 
-            # Train
-            results, global_step = train_single_config(
-                batch_size=batch_size,
-                lr=lr,
-                config=config,
-                device=device,
-                logger=logger,
-                global_step=global_step,
-                verbose=True
-            )
+        # Train (MUST be outside the batch size header check!)
+        results, global_step = train_single_config(
+            batch_size=batch_size,
+            lr=lr,
+            config=config,
+            device=device,
+            logger=logger,
+            global_step=global_step,
+            verbose=True
+        )
 
-            # Add timestamp
-            results['timestamp'] = time.time() - start_time
+        # Add timestamp
+        results['timestamp'] = time.time() - start_time
 
-            # Save to CSV (write immediately for recovery)
-            csv_row = {k: results[k] for k in fieldnames}
-            csv_writer.writerow(csv_row)
-            csv_file.flush()  # Flush to disk immediately
+        # Save to CSV (write immediately for recovery)
+        csv_row = {k: results[k] for k in fieldnames}
+        csv_writer.writerow(csv_row)
+        csv_file.flush()  # Flush to disk immediately
 
-            # Save checkpoint (for resume capability)
-            save_checkpoint(checkpoint_file, batch_size, lr)
+        # Save checkpoint (for resume capability)
+        save_checkpoint(checkpoint_file, batch_size, lr)
 
-            # Store full results
-            all_results.append(results)
+        # Store full results
+        all_results.append(results)
 
-            # Log summary to wandb (use global_step - already updated after training)
-            if logger is not None:
-                logger.log({
-                    f'summary/B{batch_size}_LR{lr:.6f}_final_val_loss': results['final_val_loss'],
-                    f'summary/B{batch_size}_LR{lr:.6f}_final_train_loss': results['final_train_loss'],
-                    f'summary/B{batch_size}_LR{lr:.6f}_converged': 1.0 if results['converged'] else 0.0,
-                    # Also log to general summary for easy viewing
-                    'summary/final_val_loss': results['final_val_loss'],
-                    'summary/final_train_loss': results['final_train_loss'],
-                    'summary/batch_size': batch_size,
-                    'summary/lr': lr
-                }, step=global_step)
+        # Log summary to wandb (use global_step - already updated after training)
+        if logger is not None:
+            logger.log({
+                f'summary/B{batch_size}_LR{lr:.6f}_final_val_loss': results['final_val_loss'],
+                f'summary/B{batch_size}_LR{lr:.6f}_final_train_loss': results['final_train_loss'],
+                f'summary/B{batch_size}_LR{lr:.6f}_converged': 1.0 if results['converged'] else 0.0,
+                # Also log to general summary for easy viewing
+                'summary/final_val_loss': results['final_val_loss'],
+                'summary/final_train_loss': results['final_train_loss'],
+                'summary/batch_size': batch_size,
+                'summary/lr': lr
+            }, step=global_step)
 
-            # Print summary
-            print(f"  Final val loss: {results['final_val_loss']:.4f}")
-            print(f"  Converged: {results['converged']}")
+        # Print summary
+        print(f"  Final val loss: {results['final_val_loss']:.4f}")
+        print(f"  Converged: {results['converged']}")
 
     csv_file.close()
 
