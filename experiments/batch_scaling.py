@@ -291,9 +291,18 @@ def train_single_config(
     eval_interval = train_config.get('eval_interval', 100)
 
     # Use provided gradient_clip parameter, or fall back to config
+    # Note: gradient_clip can be:
+    #   - None (not provided) → use config default
+    #   - 0 or negative → disable clipping (set to None)
+    #   - positive number → use as clip threshold
     if gradient_clip is None:
+        # Not explicitly set in config list, use training config default
         grad_clip = train_config.get('grad_clip', 1.0)
+    elif gradient_clip <= 0:
+        # Explicitly disabled (use 0 or negative to mean "no clipping")
+        grad_clip = None
     else:
+        # Explicitly set to a positive threshold
         grad_clip = gradient_clip
 
     train_losses = []
@@ -305,7 +314,7 @@ def train_single_config(
     clip_events = []  # 1 if clipped, 0 otherwise
 
     # Format gradient clip for display
-    clip_str = f"clip={grad_clip:.2f}" if grad_clip is not None and grad_clip > 0 else "clip=None"
+    clip_str = f"clip={grad_clip:.2f}" if grad_clip is not None else "clip=None"
     pbar = tqdm(range(steps), desc=f"B={batch_size}, LR={lr:.6f}, {clip_str}", disable=not verbose)
 
     for step in pbar:
@@ -337,16 +346,18 @@ def train_single_config(
         total_norm_before = total_norm_before ** 0.5
 
         # Gradient clipping (conditional)
-        if grad_clip is not None and grad_clip > 0:
+        if grad_clip is not None:
             total_norm_after = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             total_norm_after = total_norm_after.item()
+            was_clipped = 1.0 if total_norm_before > grad_clip else 0.0
         else:
+            # No clipping applied
             total_norm_after = total_norm_before
+            was_clipped = 0.0
 
         # Track clipping statistics
         grad_norms_before.append(total_norm_before)
         grad_norms_after.append(total_norm_after)
-        was_clipped = 1.0 if (grad_clip is not None and total_norm_before > grad_clip) else 0.0
         clip_events.append(was_clipped)
 
         # Optimizer step
@@ -426,7 +437,7 @@ def train_single_config(
     results = {
         'batch_size': batch_size,
         'lr': lr,
-        'gradient_clip': grad_clip,  # Store the clip value used
+        'gradient_clip': grad_clip if grad_clip is not None else float('nan'),  # Store None as NaN for CSV compatibility
         'final_train_loss': final_train_loss,
         'final_val_loss': final_val_loss,
         'train_loss_std': final_train_std,

@@ -30,14 +30,13 @@ training:
   convergence_threshold: 0.01
 
 batch_sweep:
-  # ONLY the 3 missing configs
+  # ONLY the 2 missing configs (clip=null → use 0 to disable clipping)
   configs:
-    # B=32 missing configs
-    - {batch_size: 32, lr: 0.001, gradient_clip: null}   # CRITICAL: No clipping baseline
-    - {batch_size: 32, lr: 0.001, gradient_clip: 10.0}  # High threshold (rare clipping)
+    # B=32 missing config
+    - {batch_size: 32, lr: 0.001, gradient_clip: 0}   # CRITICAL: No clipping baseline (0 = disabled)
 
     # B=256 missing config
-    - {batch_size: 256, lr: 0.05, gradient_clip: null}   # CRITICAL: No clipping at high LR
+    - {batch_size: 256, lr: 0.05, gradient_clip: 0}   # CRITICAL: No clipping at high LR (0 = disabled)
 
   # Total: 3 configs × 5000 steps ≈ 20-30 minutes on L40
 
