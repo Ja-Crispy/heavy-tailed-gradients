@@ -1,0 +1,62 @@
+# Phase 3b: Missing Gradient Clipping Configs
+# Runs ONLY the 3 missing configs from original Phase 3b
+# Output will be merged with existing Phase 3b results
+
+experiment:
+  name: "phase_3b_missing"
+  seed: 42
+  output_dir: "outputs/phase_3b_missing"  # Separate directory to avoid checkpoint conflict
+  description: "Missing clip=null and clip=10.0 configs from Phase 3b"
+
+model:
+  type: "nano_transformer"
+  d_model: 128
+  n_layers: 4
+  n_heads: 4
+  vocab_size: 128
+  seq_length: 256
+  dropout: 0.0
+
+training:
+  steps: 5000
+  optimizer: "adamw"
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+  warmup_steps: 100
+  use_compile: true  # Same as Phase 3b
+
+  eval_interval: 100
+  convergence_window: 50
+  convergence_threshold: 0.01
+
+batch_sweep:
+  # ONLY the 3 missing configs
+  configs:
+    # B=32 missing configs
+    - {batch_size: 32, lr: 0.001, gradient_clip: null}   # CRITICAL: No clipping baseline
+    - {batch_size: 32, lr: 0.001, gradient_clip: 10.0}  # High threshold (rare clipping)
+
+    # B=256 missing config
+    - {batch_size: 256, lr: 0.05, gradient_clip: null}   # CRITICAL: No clipping at high LR
+
+  # Total: 3 configs × 5000 steps ≈ 20-30 minutes on L40
+
+dataset:
+  name: "wikitext2"
+  split: "train"
+  tokenizer: "char"
+  data_dir: "data/wikitext-2"
+  max_sequences: null
+
+logging:
+  use_wandb: true
+  wandb_project: "laplace-scaling-phase3b-missing"  # Separate project
+  wandb_entity: null
+  log_interval: 50
+  save_checkpoints: false
+  save_results_csv: true
+  results_file: "results.csv"
+
+# After running, merge with Phase 3b results:
+# cat outputs/phase_3b/logs/results.csv > outputs/phase_3b_combined/results.csv
+# tail -n +2 outputs/phase_3b_missing/logs/results.csv >> outputs/phase_3b_combined/results.csv

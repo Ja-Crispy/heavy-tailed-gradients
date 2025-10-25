@@ -36,6 +36,36 @@ def load_results(csv_path: Path) -> pd.DataFrame:
     df['gradient_clip'] = df['gradient_clip'].replace('None', None)
     df['gradient_clip'] = pd.to_numeric(df['gradient_clip'], errors='coerce')
 
+    # Check for duplicates
+    dup_mask = df.duplicated(subset=['batch_size', 'lr', 'gradient_clip'], keep=False)
+    if dup_mask.any():
+        print("\n⚠ WARNING: Duplicate configs found (likely from checkpoint resume):")
+        dup_df = df[dup_mask].sort_values(['batch_size', 'lr', 'gradient_clip'])
+        for (batch, lr, clip), group in dup_df.groupby(['batch_size', 'lr', 'gradient_clip']):
+            clip_str = f"{clip:.2f}" if pd.notna(clip) else "None"
+            print(f"  B={batch}, LR={lr:.4f}, clip={clip_str}: {len(group)} runs")
+
+        # Average duplicates
+        print("\n  → Averaging duplicate configs for analysis")
+        df = df.groupby(['batch_size', 'lr', 'gradient_clip'], as_index=False).mean()
+
+    # Check for missing configs
+    expected_clips = [None, 10.0, 1.0, 0.1]
+    for batch in df['batch_size'].unique():
+        batch_df = df[df['batch_size'] == batch]
+        missing_clips = []
+        for clip in expected_clips:
+            if clip is None:
+                if not batch_df['gradient_clip'].isna().any():
+                    missing_clips.append("None")
+            else:
+                if not (batch_df['gradient_clip'] == clip).any():
+                    missing_clips.append(f"{clip}")
+
+        if missing_clips:
+            lr = batch_df['lr'].iloc[0]
+            print(f"\n⚠ WARNING: Missing configs for B={batch}, LR={lr}: clip={', '.join(missing_clips)}")
+
     return df
 
 
