@@ -437,69 +437,53 @@ MIT License - see LICENSE file for details
 
 📊 **Results**: See [PHASE_2_5_RESULTS.md](PHASE_2_5_RESULTS.md)
 
-### Phase 3a: Extended LR Range 🚀 (In Progress)
-**Goal**: Find true optimal LR for large batches (resolve saturation)
+### Phase 3: Extended Batch Scaling Investigation ✅ (COMPLETE)
 
-**Setup**:
-- **Batches**: [128, 256] only
-- **LRs**: [0.01, 0.02, 0.03, 0.05, 0.1] (extended range)
-- **Steps**: 5,000 per config (faster than Phase 2.5)
-- **Total**: 10 configs (~1.5 hours on L40)
+**Phase 3a: Extended LR Range**
+- **Goal**: Find true optimal LR for large batches (resolve saturation)
+- **Setup**: Batches [128, 256], LRs [0.01, 0.02, 0.03, 0.05, 0.1], 10 configs, ~1.5 hours on L40
+- **Key Finding**: **Phase transition to β=0 at saturation**
+  - Both B=128 and B=256 chose LR=0.05 (identical!)
+  - 100% gradient clipping → effective LR decoupled from nominal LR
+  - Pre-saturation (LR ≤ 0.01): β = 1.17
+  - Saturation (LR ≥ 0.05): β = 0
 
-**Expected Outcomes**:
-- If B=256 optimal > 0.03: β ≈ 1.3-1.5 (revolutionary!)
-- If B=256 optimal = 0.01-0.02: β ≈ 1.0 (still super-linear)
-- If diverges above 0.01: β=1.17 was accurate
+**Phase 3b: Gradient Clipping Mechanism Test**
+- **Goal**: Test if differential clipping explains super-linear scaling
+- **Hypothesis**: Small batches clip more → reduced effective LR
+- **Setup**: Batches [32, 256], gradient clips [0.01, 0.1, 1.0, 10.0, None], 9 configs, ~2 hours on L40
+- **Key Finding**: **Hypothesis REJECTED**
+  - Both batches perform best with clip=1.0
+  - Clipping acts as beneficial regularization, not just stability
+  - Super-linear scaling mechanism remains unknown
+  - Effective β ≈ 1.6 when accounting for gradient norms
+
+**Synthesis**:
+- Super-linear batch scaling (β ≈ 1.6-1.88) is **robust and reproducible**
+- Mechanism is **unknown** (not differential clipping)
+- Likely candidates: AdamW dynamics, character-level specifics, or small model effects
+- Practical: Gradient clipping=1.0 is optimal across batch sizes
+
+📊 **Results**: See [PHASE_3_RESULTS.md](PHASE_3_RESULTS.md)
 
 **Commands**:
 ```bash
 # Run Phase 3a
 python experiments/batch_scaling.py --config config/phase_3a_extend_lr.yaml
 
-# Analyze results
-python analysis/phase_2_analysis.py \
-    --results outputs/phase_3a/logs/results.csv \
-    --output outputs/phase_3a/plots
-```
-
-### Phase 3b: Gradient Clipping Mechanism Test 🔬 (Planned)
-**Goal**: Explain super-linear scaling via gradient clipping hypothesis
-
-**Hypothesis**:
-- Small batches (B=32) → noisy gradients → frequent clipping → reduced effective LR
-- Large batches (B=256) → stable gradients → rare clipping → can use higher nominal LR
-- This creates effective LR scaling beyond what gradient noise theory predicts
-
-**Setup**:
-- **Batches**: [32, 256] (endpoints)
-- **LRs**: [0.001 for B=32, optimal from 3a for B=256]
-- **Gradient clips**: [None, 1.0, 0.1, 0.01]
-- **Steps**: 5,000 per config
-- **Total**: 8 configs (~1.5 hours on L40)
-
-**Metrics to Track**:
-- `avg_grad_norm_before`: Gradient norm before clipping
-- `avg_grad_norm_after`: Gradient norm after clipping
-- `avg_clip_frequency`: Fraction of steps where clipping activated
-- `final_val_loss`: Performance
-
-**Expected**:
-- B=32 shows high clip frequency (>20%)
-- B=256 shows low clip frequency (<5%)
-- Removing clipping hurts B=32 more than B=256
-- Clipping creates different effective LR scaling for each batch
-
-**Commands**:
-```bash
-# FIRST: Update config/phase_3b_clip_test.yaml with B=256 optimal LR from Phase 3a
-
 # Run Phase 3b
 python experiments/batch_scaling.py --config config/phase_3b_clip_test.yaml
 
-# Analyze results
+# Analyze Phase 3a
+python analysis/phase_3a_analysis.py \
+    --phase3a_results l40-output/phase_3a/logs/results.csv \
+    --phase2_5_results l40-output/phase_2_5/logs/results.csv \
+    --output l40-output/phase_3a/plots
+
+# Analyze Phase 3b
 python analysis/phase_3b_clip_analysis.py \
-    --results outputs/phase_3b/logs/results.csv \
-    --output outputs/phase_3b/plots
+    --results l40-output/phase_3b_combined/logs/results.csv \
+    --output l40-output/phase_3b_combined/plots
 ```
 
 ### Phase 3c: Model Scale Dependence (Future)
@@ -524,8 +508,8 @@ python analysis/phase_3b_clip_analysis.py \
 - Phase 1: ✅ COMPLETE - Laplace behavior confirmed (α ≈ 3)
 - Phase 2: ❌ Inconclusive - Synthetic task insufficient
 - Phase 2.5: ✅ COMPLETE - Super-linear scaling discovered (β = 1.17)
-- Phase 3a: 🚀 In Progress - Extending LR range to find true optimal
-- Phase 3b: 📝 Planned - Test gradient clipping mechanism
+- Phase 3a: ✅ COMPLETE - Phase transition to saturation (β = 0 at LR=0.05)
+- Phase 3b: ✅ COMPLETE - Differential clipping hypothesis rejected
 - Phase 3c/4: 📝 Future - Model scale and optimizer impact
 
 For detailed implementation decisions and expert review notes, see `IMPLEMENTATION_DECISIONS.md`.
