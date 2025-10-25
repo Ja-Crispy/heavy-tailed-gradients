@@ -215,6 +215,17 @@ def train_single_config(
         dropout=model_config.get('dropout', 0.0)
     ).to(device)
 
+    # Apply torch.compile() if enabled (PyTorch 2.0+, significant speedup)
+    use_compile = train_config.get('use_compile', False)
+    if use_compile:
+        try:
+            model = torch.compile(model)
+            if verbose:
+                print("  ✓ torch.compile() enabled (expect 20-30% speedup)")
+        except Exception as e:
+            if verbose:
+                print(f"  ⚠ torch.compile() failed: {e}, using eager mode")
+
     # Create optimizer
     optimizer = create_optimizer(model, lr, config)
 

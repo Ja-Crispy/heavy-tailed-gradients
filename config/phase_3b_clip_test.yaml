@@ -24,6 +24,7 @@ training:
   betas: [0.9, 0.999]
   weight_decay: 0.01
   warmup_steps: 100  # 2% of training
+  use_compile: true  # Enable torch.compile() for 20-30% speedup (PyTorch 2.0+, works on L4/L40)
 
   # NOTE: gradient clipping is specified per-config below, not here
 
@@ -49,15 +50,13 @@ batch_sweep:
 
     # ============================================================================
     # Batch 256 (large batch, stable gradients)
-    # Optimal LR from Phase 3a: **UPDATE THIS AFTER RUNNING PHASE 3A**
-    # Hypothesis: Low clip frequency, especially at optimal LR
+    # Optimal LR from Phase 3a: **0.05** (both B=128 and B=256 converged to same LR)
+    # Hypothesis: At LR=0.05 with clip=1.0, clipping is 100% active (saturation)
     # ============================================================================
-    # PLACEHOLDER: Replace 0.03 with actual optimal from Phase 3a results
-    # Expected range: 0.02-0.05 based on β=1.17 trend
-    - {batch_size: 256, lr: 0.03, gradient_clip: null}   # No clipping baseline
-    - {batch_size: 256, lr: 0.03, gradient_clip: 1.0}   # Phase 2.5 default
-    - {batch_size: 256, lr: 0.03, gradient_clip: 0.1}   # Strong clipping
-    - {batch_size: 256, lr: 0.03, gradient_clip: 0.01}  # Very strong clipping
+    - {batch_size: 256, lr: 0.05, gradient_clip: null}   # No clipping baseline - CRITICAL TEST
+    - {batch_size: 256, lr: 0.05, gradient_clip: 10.0}  # 10× higher threshold
+    - {batch_size: 256, lr: 0.05, gradient_clip: 1.0}   # Phase 3a baseline (100% clip freq)
+    - {batch_size: 256, lr: 0.05, gradient_clip: 0.1}   # Strong clipping ceiling
 
   # Total: 8 configs (2 batches × 4 clip values)
   # Expected runtime:
@@ -100,14 +99,16 @@ analysis:
 # ============================================================================
 # INSTRUCTIONS FOR RUNNING PHASE 3B:
 # ============================================================================
-# 1. Run Phase 3a first to find optimal LR for B=256
-# 2. Analyze Phase 3a results:
-#    python analysis/phase_2_analysis.py --results outputs/phase_3a/logs/results.csv
-# 3. Update the "lr: 0.03" placeholders above with the actual B=256 optimal LR
-# 4. Run Phase 3b:
+# 1. ✅ Phase 3a complete: Both B=128 and B=256 chose LR=0.05 (β=0, 100% clip freq)
+# 2. ✅ Config updated: B=256 now uses LR=0.05 (Phase 3a optimal)
+# 3. Run Phase 3b:
 #    python experiments/batch_scaling.py --config config/phase_3b_clip_test.yaml
-# 5. Analyze Phase 3b results:
+# 4. Analyze Phase 3b results:
 #    python analysis/phase_3b_clip_analysis.py \
 #      --results outputs/phase_3b/logs/results.csv \
 #      --output outputs/phase_3b/plots
+#
+# CRITICAL TEST: Does B=256 with gradient_clip=null (no clipping) at LR=0.05:
+#   - Train stably → clipping was the ceiling (not model capacity)
+#   - Diverge (NaN) → model capacity is the ultimate limit
 # ============================================================================
