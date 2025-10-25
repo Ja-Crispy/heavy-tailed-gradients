@@ -1,0 +1,113 @@
+# Phase 3b: Gradient Clipping Mechanism Test
+# Goal: Validate that gradient clipping + large batch creates super-linear scaling
+# Tests hypothesis: Small batches clip frequently → reduced effective LR
+#                   Large batches clip rarely → can use higher nominal LR
+
+experiment:
+  name: "phase_3b_clip_test"
+  seed: 42
+  output_dir: "outputs/phase_3b"
+  description: "Test gradient clipping mechanism across batch sizes and clip thresholds"
+
+model:
+  type: "nano_transformer"
+  d_model: 128  # Same as Phase 2.5 and 3a
+  n_layers: 4
+  n_heads: 4
+  vocab_size: 128  # Character-level
+  seq_length: 256
+  dropout: 0.0
+
+training:
+  steps: 5000  # Same as Phase 3a - sufficient to measure clip effects
+  optimizer: "adamw"
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+  warmup_steps: 100  # 2% of training
+
+  # NOTE: gradient clipping is specified per-config below, not here
+
+  # Convergence criteria
+  eval_interval: 100
+  convergence_window: 50  # Average final 50 steps
+  convergence_threshold: 0.01  # Loss std < 0.01 for convergence
+
+batch_sweep:
+  # Explicit config list (not cartesian product)
+  # Each config specifies (batch_size, lr, gradient_clip)
+
+  configs:
+    # ============================================================================
+    # Batch 32 (small batch, noisy gradients)
+    # Optimal LR from Phase 2.5: 0.001
+    # Hypothesis: High clip frequency at all thresholds
+    # ============================================================================
+    - {batch_size: 32, lr: 0.001, gradient_clip: null}   # No clipping baseline
+    - {batch_size: 32, lr: 0.001, gradient_clip: 1.0}   # Phase 2.5 default
+    - {batch_size: 32, lr: 0.001, gradient_clip: 0.1}   # Strong clipping
+    - {batch_size: 32, lr: 0.001, gradient_clip: 0.01}  # Very strong clipping
+
+    # ============================================================================
+    # Batch 256 (large batch, stable gradients)
+    # Optimal LR from Phase 3a: **UPDATE THIS AFTER RUNNING PHASE 3A**
+    # Hypothesis: Low clip frequency, especially at optimal LR
+    # ============================================================================
+    # PLACEHOLDER: Replace 0.03 with actual optimal from Phase 3a results
+    # Expected range: 0.02-0.05 based on β=1.17 trend
+    - {batch_size: 256, lr: 0.03, gradient_clip: null}   # No clipping baseline
+    - {batch_size: 256, lr: 0.03, gradient_clip: 1.0}   # Phase 2.5 default
+    - {batch_size: 256, lr: 0.03, gradient_clip: 0.1}   # Strong clipping
+    - {batch_size: 256, lr: 0.03, gradient_clip: 0.01}  # Very strong clipping
+
+  # Total: 8 configs (2 batches × 4 clip values)
+  # Expected runtime:
+  #   - L40 GPU: ~1-1.5 hours (8 × 5000 steps × ~10 min)
+  #   - 3050 GPU: ~3 hours (8 × 5000 steps × ~20 min)
+
+dataset:
+  name: "wikitext2"
+  split: "train"
+  tokenizer: "char"  # Character-level tokenization
+  data_dir: "data/wikitext-2"
+  max_sequences: null  # Use all available sequences
+
+logging:
+  use_wandb: true
+  wandb_project: "laplace-scaling-phase3b"
+  wandb_entity: null  # Use default
+  log_interval: 50
+  save_checkpoints: false
+
+  # Save results to CSV for analysis
+  save_results_csv: true
+  results_file: "results.csv"
+
+# Analysis settings (use phase_3b_clip_analysis.py)
+analysis:
+  # Expected outcomes:
+  # 1. B=32 shows high clip_frequency (>20%) across all thresholds
+  # 2. B=256 shows low clip_frequency (<5%) at optimal LR
+  # 3. gradient_clip=null hurts B=32 more than B=256 (needs clipping for stability)
+  # 4. Strong clipping (0.1, 0.01) hurts performance at all batch sizes
+  # 5. Loss vs clip_value shows different sensitivity curves for each batch
+
+  # Metrics to track (automatically logged):
+  #   - avg_grad_norm_before: Average gradient norm before clipping
+  #   - avg_grad_norm_after: Average gradient norm after clipping
+  #   - avg_clip_frequency: Fraction of steps where ||g|| > clip_threshold
+  #   - final_val_loss: Performance metric
+
+# ============================================================================
+# INSTRUCTIONS FOR RUNNING PHASE 3B:
+# ============================================================================
+# 1. Run Phase 3a first to find optimal LR for B=256
+# 2. Analyze Phase 3a results:
+#    python analysis/phase_2_analysis.py --results outputs/phase_3a/logs/results.csv
+# 3. Update the "lr: 0.03" placeholders above with the actual B=256 optimal LR
+# 4. Run Phase 3b:
+#    python experiments/batch_scaling.py --config config/phase_3b_clip_test.yaml
+# 5. Analyze Phase 3b results:
+#    python analysis/phase_3b_clip_analysis.py \
+#      --results outputs/phase_3b/logs/results.csv \
+#      --output outputs/phase_3b/plots
+# ============================================================================

@@ -183,10 +183,11 @@ def train_single_config(
     device: torch.device,
     logger: Optional[FlexibleLogger] = None,
     global_step: int = 0,
-    verbose: bool = True
+    verbose: bool = True,
+    gradient_clip: Optional[float] = None
 ) -> Tuple[Dict[str, Any], int]:
     """
-    Train a single (batch_size, lr) configuration.
+    Train a single (batch_size, lr, gradient_clip) configuration.
 
     Args:
         batch_size: Batch size for this config
@@ -196,9 +197,10 @@ def train_single_config(
         logger: Optional logger for wandb/file logging
         global_step: Global step counter across all configs (for wandb)
         verbose: Whether to show progress bar
+        gradient_clip: Optional gradient clipping threshold (overrides config if provided)
 
     Returns:
-        results: Dict with final_loss, convergence info, training curve
+        results: Dict with final_loss, convergence info, training curve, gradient stats
         global_step: Updated global step counter
     """
     model_config = config['model']
@@ -276,12 +278,24 @@ def train_single_config(
     steps = train_config['steps']
     warmup_steps = train_config.get('warmup_steps', 100)
     eval_interval = train_config.get('eval_interval', 100)
-    grad_clip = train_config.get('grad_clip', 1.0)
+
+    # Use provided gradient_clip parameter, or fall back to config
+    if gradient_clip is None:
+        grad_clip = train_config.get('grad_clip', 1.0)
+    else:
+        grad_clip = gradient_clip
 
     train_losses = []
     val_losses = []
 
-    pbar = tqdm(range(steps), desc=f"B={batch_size}, LR={lr:.6f}", disable=not verbose)
+    # Track gradient statistics (for Phase 3b)
+    grad_norms_before = []
+    grad_norms_after = []
+    clip_events = []  # 1 if clipped, 0 otherwise
+
+    # Format gradient clip for display
+    clip_str = f"clip={grad_clip:.2f}" if grad_clip is not None and grad_clip > 0 else "clip=None"
+    pbar = tqdm(range(steps), desc=f"B={batch_size}, LR={lr:.6f}, {clip_str}", disable=not verbose)
 
     for step in pbar:
         model.train()
@@ -303,9 +317,26 @@ def train_single_config(
         optimizer.zero_grad()
         loss.backward()
 
-        # Gradient clipping
-        if grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        # Track gradient norm before clipping
+        total_norm_before = 0.0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm_before += param_norm.item() ** 2
+        total_norm_before = total_norm_before ** 0.5
+
+        # Gradient clipping (conditional)
+        if grad_clip is not None and grad_clip > 0:
+            total_norm_after = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            total_norm_after = total_norm_after.item()
+        else:
+            total_norm_after = total_norm_before
+
+        # Track clipping statistics
+        grad_norms_before.append(total_norm_before)
+        grad_norms_after.append(total_norm_after)
+        was_clipped = 1.0 if (grad_clip is not None and total_norm_before > grad_clip) else 0.0
+        clip_events.append(was_clipped)
 
         # Optimizer step
         optimizer.step()
@@ -336,16 +367,28 @@ def train_single_config(
 
             # Log to wandb if logger is available
             if logger is not None:
-                logger.log({
+                log_dict = {
                     f'B{batch_size}_LR{lr:.6f}/train_loss': loss.item(),
                     f'B{batch_size}_LR{lr:.6f}/val_loss': val_losses[-1],
                     f'B{batch_size}_LR{lr:.6f}/learning_rate': current_lr,
+                    f'B{batch_size}_LR{lr:.6f}/grad_norm_before': total_norm_before,
+                    f'B{batch_size}_LR{lr:.6f}/grad_norm_after': total_norm_after,
+                    f'B{batch_size}_LR{lr:.6f}/clip_frequency': was_clipped,
                     # Also log to general metrics for easy comparison
                     'train_loss': loss.item(),
                     'val_loss': val_losses[-1],
                     'batch_size': batch_size,
-                    'lr': lr
-                }, step=global_step + step)
+                    'lr': lr,
+                    'grad_norm_before': total_norm_before,
+                    'grad_norm_after': total_norm_after,
+                    'clip_frequency': was_clipped
+                }
+
+                # Add gradient clip value if it's being varied (Phase 3b)
+                if gradient_clip is not None:
+                    log_dict['gradient_clip'] = gradient_clip
+
+                logger.log(log_dict, step=global_step + step)
 
         # Update progress bar
         if len(val_losses) > 0:
@@ -360,6 +403,11 @@ def train_single_config(
     final_val_loss = np.mean(final_val_losses)
     final_train_std = np.std(final_train_losses)
 
+    # Compute gradient statistics
+    avg_grad_norm_before = np.mean(grad_norms_before)
+    avg_grad_norm_after = np.mean(grad_norms_after)
+    avg_clip_frequency = np.mean(clip_events)  # Fraction of steps where clipping occurred
+
     # Check convergence
     convergence_threshold = train_config.get('convergence_threshold', 0.01)
     converged = final_train_std < convergence_threshold
@@ -367,11 +415,15 @@ def train_single_config(
     results = {
         'batch_size': batch_size,
         'lr': lr,
+        'gradient_clip': grad_clip,  # Store the clip value used
         'final_train_loss': final_train_loss,
         'final_val_loss': final_val_loss,
         'train_loss_std': final_train_std,
         'converged': converged,
         'num_steps': steps,
+        'avg_grad_norm_before': avg_grad_norm_before,
+        'avg_grad_norm_after': avg_grad_norm_after,
+        'avg_clip_frequency': avg_clip_frequency,
         'train_losses': train_losses,
         'val_losses': val_losses
     }
@@ -419,18 +471,45 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
     else:
         print(f"\n✗ WandB logging disabled")
 
-    # Get sweep parameters
-    batch_sizes = sweep_config['batch_sizes']
-    lr_candidates = sweep_config['lr_candidates']
+    # Get sweep parameters - support explicit configs or cartesian product
+    if 'configs' in sweep_config:
+        # Explicit config list (Phase 3b - gradient clipping sweep)
+        explicit_configs = sweep_config['configs']
+        all_configs = [
+            (c['batch_size'], c['lr'], c.get('gradient_clip', None))
+            for c in explicit_configs
+        ]
+        total_experiments = len(all_configs)
 
-    # Prepare all configurations
-    all_configs = [(b, lr) for b in batch_sizes for lr in lr_candidates]
-    total_experiments = len(all_configs)
+        print(f"\nExplicit config list: {total_experiments} configurations")
+        print(f"Output directory: {output_dir}")
 
-    print(f"\nBatch sizes: {batch_sizes}")
-    print(f"LR candidates: {lr_candidates}")
-    print(f"Total experiments: {len(batch_sizes)} × {len(lr_candidates)} = {total_experiments}")
-    print(f"Output directory: {output_dir}")
+        # Show summary of what's being tested
+        unique_batches = sorted(set(c[0] for c in all_configs))
+        unique_lrs = sorted(set(c[1] for c in all_configs))
+        unique_clips = sorted(set(c[2] for c in all_configs if c[2] is not None))
+        print(f"  Batch sizes: {unique_batches}")
+        print(f"  Learning rates: {unique_lrs}")
+        if unique_clips:
+            print(f"  Gradient clips: {unique_clips} + [None]")
+
+    else:
+        # Cartesian product (Phase 2/3a - standard batch/LR sweep)
+        batch_sizes = sweep_config['batch_sizes']
+        lr_candidates = sweep_config['lr_candidates']
+        gradient_clip_default = sweep_config.get('gradient_clip', None)
+
+        all_configs = [
+            (b, lr, gradient_clip_default)
+            for b in batch_sizes
+            for lr in lr_candidates
+        ]
+        total_experiments = len(all_configs)
+
+        print(f"\nBatch sizes: {batch_sizes}")
+        print(f"LR candidates: {lr_candidates}")
+        print(f"Total experiments: {len(batch_sizes)} × {len(lr_candidates)} = {total_experiments}")
+        print(f"Output directory: {output_dir}")
 
     # Load checkpoint and filter completed configs
     checkpoint_file = output_dir / 'checkpoint.json'
@@ -443,8 +522,11 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
         print(f"  Remaining: {status['num_remaining']}")
         print(f"  Status: Resuming from checkpoint")
 
-        # Filter out completed configs
-        remaining_configs = [(b, lr) for b, lr in all_configs if (b, lr) not in completed_configs]
+        # Filter out completed configs (check first 2 elements for backward compatibility)
+        remaining_configs = [
+            (b, lr, clip) for b, lr, clip in all_configs
+            if (b, lr) not in completed_configs
+        ]
     else:
         print(f"\n📊 Checkpoint Status:")
         print(f"  No previous checkpoint found")
@@ -453,11 +535,13 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
 
     print(f"  Configs to run: {len(remaining_configs)}")
 
-    # Initialize results CSV
+    # Initialize results CSV with gradient statistics
     results_file = logs_dir / config['logging'].get('results_file', 'results.csv')
     fieldnames = [
-        'batch_size', 'lr', 'final_train_loss', 'final_val_loss',
-        'train_loss_std', 'converged', 'num_steps', 'timestamp'
+        'batch_size', 'lr', 'gradient_clip',
+        'final_train_loss', 'final_val_loss', 'train_loss_std',
+        'avg_grad_norm_before', 'avg_grad_norm_after', 'avg_clip_frequency',
+        'converged', 'num_steps', 'timestamp'
     ]
 
     # Open CSV in append mode if resuming, write mode if starting fresh
@@ -474,9 +558,12 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
 
     start_time = time.time()
 
-    for batch_size, lr in remaining_configs:
+    for batch_size, lr, gradient_clip in remaining_configs:
         experiment_num += 1
-        print(f"\n[{experiment_num}/{total_experiments}] Training: B={batch_size}, LR={lr:.6f}")
+
+        # Format display message
+        clip_str = f", clip={gradient_clip:.2f}" if gradient_clip is not None else ", clip=None"
+        print(f"\n[{experiment_num}/{total_experiments}] Training: B={batch_size}, LR={lr:.6f}{clip_str}")
 
         # Check batch size boundary (for printing header)
         if experiment_num == 1 or (batch_size != remaining_configs[max(0, experiment_num-2)][0]):
@@ -486,11 +573,14 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
 
         # Log config to wandb (use global_step for monotonicity)
         if logger is not None:
-            logger.log({
+            log_dict = {
                 'config/batch_size': batch_size,
                 'config/lr': lr,
                 'config/experiment_num': experiment_num
-            }, step=global_step)
+            }
+            if gradient_clip is not None:
+                log_dict['config/gradient_clip'] = gradient_clip
+            logger.log(log_dict, step=global_step)
 
         # Train (MUST be outside the batch size header check!)
         results, global_step = train_single_config(
@@ -500,7 +590,8 @@ def run_batch_sweep(config: Dict[str, Any], device: torch.device):
             device=device,
             logger=logger,
             global_step=global_step,
-            verbose=True
+            verbose=True,
+            gradient_clip=gradient_clip  # Pass gradient_clip parameter
         )
 
         # Add timestamp

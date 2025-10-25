@@ -414,20 +414,95 @@ MIT License - see LICENSE file for details
 
 📊 **Results**: See [PHASE_2_RESULTS.md](PHASE_2_RESULTS.md)
 
-### Phase 2.5: Batch Scaling with Real Data (In Progress)
+### Phase 2.5: Batch Scaling with Real Data ✅ (COMPLETE)
 **Goal**: Retest batch scaling with WikiText-2 language modeling
 
-**Improvements**:
-- **Dataset**: WikiText-2 (real language, not random tokens)
-- **Model**: d_model=128 (~800K params, 4× larger)
+**Setup**:
+- **Dataset**: WikiText-2 (real language, character-level tokenization)
+- **Model**: d_model=128 (~800K params, 4× larger than Phase 2)
 - **Batches**: [32, 64, 128, 256] (4 points, 8× range)
-- **LRs**: [0.0001, 0.0003, 0.001, 0.003, 0.01] (finer grid)
-- **Steps**: 10,000 (Phase 1 standard)
-- **Configs**: 20 total (~3-5 hours)
+- **LRs**: [0.0001, 0.0003, 0.001, 0.003, 0.01] (5 values per batch)
+- **Steps**: 10,000 per config
+- **Total**: 20 configs (~5 hours on L40 GPU)
 
-**Expected**: Clear measurement of β ≈ 0.67 (Laplace) or 0.50 (Gaussian)
+**Key Finding**: **Super-Linear Scaling Discovered! 🎉**
+- **Measured**: β = 1.17 ± 0.57 (R² = 0.89)
+- **Gaussian theory**: β = 0.50
+- **Laplace theory**: β = 0.67
+- **Our result**: β = 1.17 (75% higher than Laplace!)
 
-### Phase 3: Model Scale Dependence
+**Critical Observation**: B=128 and B=256 both chose LR=0.01 (max tested) → saturation!
+- True optimal for B=256 likely > 0.01
+- β=1.17 is likely an **underestimate**
+
+📊 **Results**: See [PHASE_2_5_RESULTS.md](PHASE_2_5_RESULTS.md)
+
+### Phase 3a: Extended LR Range 🚀 (In Progress)
+**Goal**: Find true optimal LR for large batches (resolve saturation)
+
+**Setup**:
+- **Batches**: [128, 256] only
+- **LRs**: [0.01, 0.02, 0.03, 0.05, 0.1] (extended range)
+- **Steps**: 5,000 per config (faster than Phase 2.5)
+- **Total**: 10 configs (~1.5 hours on L40)
+
+**Expected Outcomes**:
+- If B=256 optimal > 0.03: β ≈ 1.3-1.5 (revolutionary!)
+- If B=256 optimal = 0.01-0.02: β ≈ 1.0 (still super-linear)
+- If diverges above 0.01: β=1.17 was accurate
+
+**Commands**:
+```bash
+# Run Phase 3a
+python experiments/batch_scaling.py --config config/phase_3a_extend_lr.yaml
+
+# Analyze results
+python analysis/phase_2_analysis.py \
+    --results outputs/phase_3a/logs/results.csv \
+    --output outputs/phase_3a/plots
+```
+
+### Phase 3b: Gradient Clipping Mechanism Test 🔬 (Planned)
+**Goal**: Explain super-linear scaling via gradient clipping hypothesis
+
+**Hypothesis**:
+- Small batches (B=32) → noisy gradients → frequent clipping → reduced effective LR
+- Large batches (B=256) → stable gradients → rare clipping → can use higher nominal LR
+- This creates effective LR scaling beyond what gradient noise theory predicts
+
+**Setup**:
+- **Batches**: [32, 256] (endpoints)
+- **LRs**: [0.001 for B=32, optimal from 3a for B=256]
+- **Gradient clips**: [None, 1.0, 0.1, 0.01]
+- **Steps**: 5,000 per config
+- **Total**: 8 configs (~1.5 hours on L40)
+
+**Metrics to Track**:
+- `avg_grad_norm_before`: Gradient norm before clipping
+- `avg_grad_norm_after`: Gradient norm after clipping
+- `avg_clip_frequency`: Fraction of steps where clipping activated
+- `final_val_loss`: Performance
+
+**Expected**:
+- B=32 shows high clip frequency (>20%)
+- B=256 shows low clip frequency (<5%)
+- Removing clipping hurts B=32 more than B=256
+- Clipping creates different effective LR scaling for each batch
+
+**Commands**:
+```bash
+# FIRST: Update config/phase_3b_clip_test.yaml with B=256 optimal LR from Phase 3a
+
+# Run Phase 3b
+python experiments/batch_scaling.py --config config/phase_3b_clip_test.yaml
+
+# Analyze results
+python analysis/phase_3b_clip_analysis.py \
+    --results outputs/phase_3b/logs/results.csv \
+    --output outputs/phase_3b/plots
+```
+
+### Phase 3c: Model Scale Dependence (Future)
 **Goal**: Test if α changes with model scale
 
 - Test widths d ∈ [64, 128, 256, 512, 1024, 2048]
@@ -448,7 +523,9 @@ MIT License - see LICENSE file for details
 **Status**:
 - Phase 1: ✅ COMPLETE - Laplace behavior confirmed (α ≈ 3)
 - Phase 2: ❌ Inconclusive - Synthetic task insufficient
-- Phase 2.5: 🚀 In Progress - Real data batch scaling
-- Phase 3-4: 📝 Planned
+- Phase 2.5: ✅ COMPLETE - Super-linear scaling discovered (β = 1.17)
+- Phase 3a: 🚀 In Progress - Extending LR range to find true optimal
+- Phase 3b: 📝 Planned - Test gradient clipping mechanism
+- Phase 3c/4: 📝 Future - Model scale and optimizer impact
 
 For detailed implementation decisions and expert review notes, see `IMPLEMENTATION_DECISIONS.md`.
